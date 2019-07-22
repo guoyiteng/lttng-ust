@@ -41,6 +41,8 @@
 #include <helper.h>
 #include <ust-fd.h>
 
+#define TWO_MB 2UL * 1024 * 1024
+
 /*
  * Ensure we have the required amount of space available by writing 0
  * into the entire buffer. Not doing so can trigger SIGBUS when going
@@ -49,34 +51,43 @@
 static
 int zero_file(int fd, size_t len)
 {
-	ssize_t retlen;
-	size_t written = 0;
-	char *zeropage;
-	long pagelen;
 	int ret;
 
-	pagelen = sysconf(_SC_PAGESIZE);
-	if (pagelen < 0)
-		return (int) pagelen;
-	zeropage = calloc(pagelen, 1);
-	if (!zeropage)
-		return -ENOMEM;
+	struct stat fdStat;
 
-	while (len > written) {
-		do {
-			retlen = write(fd, zeropage,
-				min_t(size_t, pagelen, len - written));
-		} while (retlen == -1UL && errno == EINTR);
-		if (retlen < 0) {
-			ret = (int) retlen;
-			goto error;
-		}
-		written += retlen;
+	// get the size of fd.
+	ret = fstat(fd, &fdStat);
+
+	if (ret < 0) {
+		PERROR("zero_file fstat");
+		return -1;
 	}
-	ret = 0;
-error:
-	free(zeropage);
-	return ret;
+
+	// truncate to a new size.
+	ret = ftruncate(fd, len);
+
+	if (ret < 0) {
+		PERROR("zero_file ftruncate");
+		return -1;
+	}
+
+	void* addr = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_HUGETLB, fd, 0);
+
+	if (addr < 0) {
+		PERROR("zero_file mmap");
+		return -1;
+	}
+
+	// zero out the old memory region.
+	memset(addr, 0, fdStat.st_size);
+
+	ret = munmap(addr, len);
+	if (ret) {
+		PERROR("umnmap");
+		assert(0);
+	}
+
+	return 0;
 }
 
 struct shm_object_table *shm_object_table_create(size_t max_nb_obj)
@@ -135,11 +146,7 @@ struct shm_object *_shm_object_table_alloc_shm(struct shm_object_table *table,
 		PERROR("zero_file");
 		goto error_zero_file;
 	}
-	ret = ftruncate(shmfd, memory_map_size);
-	if (ret) {
-		PERROR("ftruncate");
-		goto error_ftruncate;
-	}
+
 	/*
 	 * Also ensure the file metadata is synced with the storage by using
 	 * fsync(2).
@@ -154,7 +161,7 @@ struct shm_object *_shm_object_table_alloc_shm(struct shm_object_table *table,
 
 	/* memory_map: mmap */
 	memory_map = mmap(NULL, memory_map_size, PROT_READ | PROT_WRITE,
-			  MAP_SHARED, shmfd, 0);
+			  MAP_SHARED | MAP_HUGETLB, shmfd, 0);
 	if (memory_map == MAP_FAILED) {
 		PERROR("mmap");
 		goto error_mmap;
@@ -169,7 +176,6 @@ struct shm_object *_shm_object_table_alloc_shm(struct shm_object_table *table,
 
 error_mmap:
 error_fsync:
-error_ftruncate:
 error_zero_file:
 error_fcntl:
 	for (i = 0; i < 2; i++) {

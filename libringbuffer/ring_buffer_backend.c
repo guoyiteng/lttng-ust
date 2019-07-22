@@ -31,6 +31,8 @@
 #include "smp.h"
 #include "shm.h"
 
+#define TWO_MB 2UL*1024*1024
+
 /**
  * lib_ring_buffer_backend_allocate - allocate a channel buffer
  * @config: ring buffer instance configuration
@@ -335,7 +337,7 @@ int channel_backend_init(struct channel_backend *chanb,
 	num_subbuf_alloc = num_subbuf + 1;
 	shmsize += offset_align(shmsize, __alignof__(struct lttng_ust_lib_ring_buffer_backend_pages_shmp));
 	shmsize += sizeof(struct lttng_ust_lib_ring_buffer_backend_pages_shmp) * num_subbuf_alloc;
-	shmsize += offset_align(shmsize, page_size);
+	shmsize += offset_align(shmsize, TWO_MB);
 	shmsize += subbuf_size * num_subbuf_alloc;
 	shmsize += offset_align(shmsize, __alignof__(struct lttng_ust_lib_ring_buffer_backend_pages));
 	shmsize += sizeof(struct lttng_ust_lib_ring_buffer_backend_pages) * num_subbuf_alloc;
@@ -343,6 +345,7 @@ int channel_backend_init(struct channel_backend *chanb,
 	shmsize += sizeof(struct lttng_ust_lib_ring_buffer_backend_subbuffer) * num_subbuf;
 	shmsize += offset_align(shmsize, __alignof__(struct lttng_ust_lib_ring_buffer_backend_counts));
 	shmsize += sizeof(struct lttng_ust_lib_ring_buffer_backend_counts) * num_subbuf;
+	shmsize += offset_align(shmsize, TWO_MB);
 
 	if (config->alloc == RING_BUFFER_ALLOC_PER_CPU) {
 		struct lttng_ust_lib_ring_buffer *buf;
